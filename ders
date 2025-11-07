@@ -1,0 +1,504 @@
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { setLogLevel } from 'firebase/firestore';
+import {
+  BookOpen,
+  ClipboardList,
+  LayoutGrid,
+  Settings,
+  AlertTriangle,
+  Save,
+  Loader2,
+  Lock,
+  Unlock,
+  Key,
+  ArrowLeft
+} from 'lucide-react';
+
+// Firestore loglarını açalım (geliştirme için faydalı)
+// setLogLevel('debug');
+
+/**
+ * Ana Uygulama Bileşeni
+ */
+const App = () => {
+  // Dönemlerin hangi dersleri içerdiğini gösteren ana harita
+  const PERIOD_SUBJECT_MAP = useMemo(() => ({
+    '1. Dönem': ['Matematik', 'Fizik'],
+    '2. Dönem': ['Matematik', 'Tarih'],
+  }), []);
+
+  // Home sayfasında gösterilecek benzersiz derslerin listesi
+  const uniqueSubjects = useMemo(() => {
+    const allSubjects = Object.values(PERIOD_SUBJECT_MAP).flat();
+    return Array.from(new Set(allSubjects));
+  }, [PERIOD_SUBJECT_MAP]);
+
+  // Yardımcı fonksiyon: Bir dersin hangi dönemlerde mevcut olduğunu bulur
+  const getPeriodsForSubject = useCallback((subjectName) => {
+    return Object.keys(PERIOD_SUBJECT_MAP).filter(period =>
+      PERIOD_SUBJECT_MAP[period].includes(subjectName)
+    );
+  }, [PERIOD_SUBJECT_MAP]);
+
+  const [page, setPage] = useState('home'); // 'home', 'subject', 'admin'
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState('');
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  // Seçili ders ve dönem state'leri (başlangıçta null)
+  const [selectedSubject, setSelectedSubject] = useState(null);
+  const [selectedPeriod, setSelectedPeriod] = useState(null); 
+
+  // YÖNETİCİ GİRİŞİ İÇİN STATE'LER
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [adminMockPassword, setAdminMockPassword] = useState('admin123'); 
+
+  // Firebase ve Kimlik Doğrulama Başlangıcı
+  useEffect(() => {
+    // ... (Firebase initialization and Auth logic is the same)
+    try {
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+      const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+      if (Object.keys(firebaseConfig).length === 0) {
+        console.error("Firebase konfigürasyonu eksik.");
+        return;
+      }
+
+      const app = initializeApp(firebaseConfig);
+      const firestore = getFirestore(app);
+      const userAuth = getAuth(app);
+
+      setDb(firestore);
+      setAuth(userAuth);
+
+      const initAuth = async () => {
+        try {
+          const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+          if (initialAuthToken) {
+            await signInWithCustomToken(userAuth, initialAuthToken);
+          } else {
+            await signInAnonymously(userAuth);
+          }
+          const currentUserId = userAuth.currentUser?.uid || crypto.randomUUID();
+          setUserId(currentUserId);
+          setIsAuthReady(true);
+          console.log("Firebase Başarılı, Kullanıcı ID:", currentUserId);
+        } catch (error) {
+          console.error("Kimlik doğrulama hatası:", error);
+          setIsAuthReady(true); 
+        }
+      };
+
+      initAuth();
+
+    } catch (error) {
+      console.error("Firebase başlatılırken kritik hata:", error);
+      setIsAuthReady(true);
+    }
+  }, []);
+
+  // Firestore yolunu oluşturma yardımcı fonksiyonu (Public data)
+  const getPublicDocRef = useCallback((subject, period) => {
+    if (!db || !subject || !period) return null;
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    // Doküman ID'sini ders ve dönem bilgisini birleştirerek oluşturuyoruz
+    const docId = `${subject}_${period.replace(/\s/g, '')}`; 
+    return doc(db, 'artifacts', appId, 'public', 'data', 'subjects', docId);
+  }, [db]);
+
+  const handleAdminLogin = () => {
+    if (adminPasswordInput === adminMockPassword) { 
+      setIsAdminAuthenticated(true);
+      setAdminPasswordInput(''); 
+      console.log("Yönetici girişi başarılı.");
+    } else {
+      console.error("Hatalı yönetici şifresi.");
+      setAdminPasswordInput('');
+    }
+  };
+
+
+  // --------------- Görüntüleme Bileşenleri ---------------
+
+  // Ders kartı
+  const SubjectCard = ({ name, icon, onClick }) => (
+    <div
+      onClick={onClick}
+      className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-[1.01] cursor-pointer border-t-4 border-indigo-500 flex flex-col items-center justify-center text-center"
+    >
+      <span className="text-4xl mb-3">{icon}</span>
+      <h2 className="text-xl font-semibold text-gray-800">{name}</h2>
+    </div>
+  );
+
+  // Dönem Seçim Kartı
+  const PeriodCard = ({ period, onClick }) => (
+    <div
+      onClick={onClick}
+      className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-[1.01] cursor-pointer border-t-4 border-teal-500 flex flex-col items-center justify-center text-center"
+    >
+      <span className="text-4xl mb-3">🗓️</span>
+      <h2 className="text-xl font-semibold text-gray-800">{period}</h2>
+    </div>
+  );
+
+  // SubjectDetail (İçerik Görüntüleyici)
+  const SubjectDetailContentView = ({ subject, period, db, getPublicDocRef, userId }) => {
+    const [content, setContent] = useState({ konu: '', test: [] });
+    const [tab, setTab] = useState('konu'); 
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+      if (!db || !subject || !period) return;
+      const docRef = getPublicDocRef(subject, period); 
+      if (!docRef) return;
+
+      setLoading(true);
+      setError(null);
+
+      const unsubscribe = onSnapshot(docRef, (docSnap) => {
+        setLoading(false);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const testDataString = data.testSorulari || '[]';
+          let parsedTest = [];
+          try {
+            parsedTest = JSON.parse(testDataString);
+          } catch (e) {
+            console.error("Test soruları JSON hatası:", e);
+            setError("Test soruları hatalı formatta.");
+          }
+
+          setContent({
+            konu: data.konuAnlatimi || 'İçerik Bulunamadı.',
+            test: parsedTest
+          });
+        } else {
+          setContent({ konu: 'Bu ders için henüz içerik girilmemiştir.', test: [] });
+          setError(`${period} dönemi için veri tabanında bu ders belgesi bulunamadı.`);
+        }
+      }, (err) => {
+        console.error("Firestore dinleme hatası:", err);
+        setError("İçerik yüklenirken bir hata oluştu.");
+        setLoading(false);
+      });
+
+      return () => unsubscribe();
+    }, [db, subject, period, getPublicDocRef]);
+
+    const renderContent = () => {
+      if (loading) {
+        return <div className="p-10 text-center text-gray-500 flex items-center justify-center"><Loader2 className="animate-spin mr-2" /> İçerik yükleniyor...</div>;
+      }
+      if (error) {
+        return <div className="p-4 bg-red-100 border-l-4 border-red-500 text-red-700 rounded-md mt-4 flex items-center"><AlertTriangle className="h-5 w-5 mr-2" /> {error}</div>;
+      }
+
+      if (tab === 'konu') {
+        const formattedKonu = content.konu.split('\n').map((line, index) => {
+            if (line.startsWith('# ')) return <h2 key={index} className="text-2xl font-bold mt-4 mb-2">{line.substring(2)}</h2>;
+            if (line.startsWith('## ')) return <h3 key={index} className="text-xl font-semibold mt-3 mb-1">{line.substring(3)}</h3>;
+            // Basit Markdown liste desteği
+            if (line.startsWith('* ') || line.startsWith('- ')) return <li key={index} className="mb-1 ml-4 text-gray-700 list-disc">{line.substring(2)}</li>;
+            return <p key={index} className="mb-2 text-gray-700">{line}</p>;
+        });
+        return <div className="prose p-4">{formattedKonu}</div>;
+
+      } else if (tab === 'test') {
+        if (content.test.length === 0) {
+            return <div className="p-10 text-center text-gray-500">Bu ders için henüz test sorusu girilmemiştir.</div>;
+        }
+        return (
+          <div className="space-y-6 p-4">
+            {content.test.map((item, index) => (
+              <div key={index} className="bg-white p-5 rounded-lg shadow-md border-l-4 border-indigo-500">
+                <p className="font-bold text-gray-800 mb-2">Soru {index + 1}:</p>
+                <p className="text-lg mb-3">{item.soru}</p>
+                <div className="mt-2 pt-2 border-t border-gray-100">
+                    <p className="text-sm font-medium text-indigo-600">Cevap:</p>
+                    <p className="text-gray-600 italic">{item.cevap}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      }
+    };
+
+    return (
+      <div className="p-4 sm:p-6 bg-white rounded-xl shadow-lg">
+        <button 
+            onClick={() => setSelectedPeriod(null)}
+            className="text-sm font-medium text-indigo-500 hover:text-indigo-700 transition-colors mb-3 flex items-center p-2 rounded-lg hover:bg-indigo-50"
+        >
+            <ArrowLeft className="h-4 w-4 mr-1" /> Dönem Seçimine Geri Dön
+        </button>
+        <h1 className="text-3xl font-extrabold text-indigo-700 mb-1">{subject}</h1>
+        <h2 className="text-xl font-semibold text-gray-500 mb-4 border-b pb-2">{period}</h2> 
+
+        {/* Sekmeler */}
+        <div className="flex border-b border-gray-200 mb-4">
+          <button
+            onClick={() => setTab('konu')}
+            className={`py-2 px-4 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-200 flex items-center ${tab === 'konu' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <BookOpen className="h-5 w-5 mr-2" />
+            Konu Anlatımı
+          </button>
+          <button
+            onClick={() => setTab('test')}
+            className={`py-2 px-4 text-sm sm:text-base font-medium rounded-t-lg transition-colors duration-200 flex items-center ${tab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <ClipboardList className="h-5 w-5 mr-2" />
+            Test Soruları
+          </button>
+        </div>
+
+        {/* İçerik Alanı */}
+        {renderContent()}
+
+        <p className="mt-6 text-xs text-gray-400 text-right">Kullanıcı ID: {userId}</p>
+      </div>
+    );
+  };
+
+  // Yönetici Giriş Bileşeni (Değişmedi)
+  const AdminLogin = ({ password, setPassword, handleLogin, mockPassword }) => {
+    const inputRef = useRef(null);
+    const [loginError, setLoginError] = useState(false);
+
+    useEffect(() => {
+        if (inputRef.current) {
+            inputRef.current.focus();
+        }
+    }, []);
+
+    const handleInternalLogin = () => {
+        if (password === mockPassword) {
+            handleLogin();
+            setLoginError(false);
+        } else {
+            setLoginError(true);
+            setPassword('');
+        }
+    };
+
+    return (
+      <div className="flex flex-col items-center p-8 bg-white rounded-xl shadow-2xl w-full max-w-sm">
+        <Lock className="h-12 w-12 text-red-500 mb-4" />
+        <h1 className="text-2xl font-bold text-gray-800 mb-6">Yönetici Girişi</h1>
+        <p className="text-sm text-gray-500 mb-4 text-center">İçeriği düzenlemek için yönetici şifrenizi girin.</p>
+        
+        <input
+            ref={inputRef} 
+            type="password"
+            placeholder="Şifre"
+            value={password}
+            onChange={(e) => {
+                setPassword(e.target.value);
+                setLoginError(false);
+            }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleInternalLogin(); }}
+            className={`w-full p-3 border rounded-lg shadow-sm focus:ring-red-500 focus:border-red-500 mb-4 ${loginError ? 'border-red-500' : 'border-gray-300'}`}
+        />
+        
+        {loginError && (
+            <div className="p-2 mb-4 text-sm text-red-700 bg-red-100 rounded-lg w-full flex items-center justify-center">
+                <AlertTriangle className="h-4 w-4 mr-1"/> Hatalı şifre.
+            </div>
+        )}
+
+        <button
+          onClick={handleInternalLogin}
+          className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-8 rounded-xl shadow-lg transition-all duration-300 transform hover:scale-[1.01] flex items-center justify-center"
+        >
+          <Unlock className="h-5 w-5 mr-2" /> Giriş Yap
+        </button>
+        <p className="mt-4 text-xs text-gray-400">Mevcut Mock Şifre: <span className="font-mono text-red-400">{mockPassword}</span></p>
+        <p className="mt-2 text-xs text-gray-400">Not: Gerçek bir uygulamada şifre sunucuda doğrulanmalıdır.</p>
+      </div>
+    );
+  };
+
+
+  // Yönetim Bileşeni (AdminPanel)
+  const AdminPanel = ({ db, getPublicDocRef, PERIOD_SUBJECT_MAP, adminMockPassword, setAdminMockPassword, setIsAdminAuthenticated }) => {
+    
+    const periodOptions = Object.keys(PERIOD_SUBJECT_MAP);
+    
+    // Admin panelinde dönem ve ders seçimi
+    const [period, setPeriod] = useState('1. Dönem'); 
+    const [subject, setSubject] = useState(PERIOD_SUBJECT_MAP['1. Dönem'][0]); 
+
+    const [konuContent, setKonuContent] = useState('');
+    const [testContent, setTestContent] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState({ text: '', type: '' }); 
+
+    // Şifre Değiştirme State'leri
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [passwordChangeMessage, setPasswordChangeMessage] = useState({ text: '', type: '' });
+
+
+    // İçeriği Yükleme Fonksiyonu
+    const loadContent = useCallback(async (selectedSubject, selectedPeriod) => {
+      if (!db || loading) return;
+
+      setLoading(true);
+      setMessage({ text: 'İçerik yükleniyor...', type: 'info' });
+
+      try {
+        const docRef = getPublicDocRef(selectedSubject, selectedPeriod); 
+        if (!docRef) throw new Error("Veri tabanı bağlantısı yok.");
+
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setKonuContent(data.konuAnlatimi || '');
+          setTestContent(data.testSorulari || '[]');
+          setMessage({ text: `'${selectedSubject}' dersinin '${selectedPeriod}' içeriği başarıyla yüklendi.`, type: 'success' });
+        } else {
+          // Belge yoksa, varsayılan bir başlangıç içeriği oluşturalım
+          const initialData = {
+            name: selectedSubject,
+            konuAnlatimi: `# ${selectedSubject} ${selectedPeriod} Konu Anlatımı\n\nBu, güncelleyeceğiniz konu anlatımı bölümüdür.`,
+            testSorulari: '[\n {\n "soru": "İlk varsayılan soru?",\n "cevap": "İlk varsayılan cevap"\n }\n]'
+          };
+          await setDoc(docRef, initialData);
+          setKonuContent(initialData.konuAnlatimi);
+          setTestContent(initialData.testSorulari); 
+          setMessage({ text: `'${selectedSubject}' dersinin '${selectedPeriod}' dönemi için varsayılan içerik oluşturuldu ve yüklendi.`, type: 'warning' });
+        }
+      } catch (error) {
+        console.error("İçerik yüklenirken hata:", error);
+        setMessage({ text: `İçerik yüklenemedi: ${error.message}`, type: 'error' });
+      } finally {
+        setLoading(false);
+      }
+    }, [db, loading, getPublicDocRef]);
+
+    // Subject veya Period değiştiğinde içeriği yükle
+    useEffect(() => {
+      if (db && subject && period) {
+        loadContent(subject, period);
+      }
+    }, [db, subject, period, loadContent]);
+
+    // Period değiştiğinde, eğer seçili ders yeni periyotta yoksa, ilk derse sıfırla
+    useEffect(() => {
+        if (PERIOD_SUBJECT_MAP[period] && !PERIOD_SUBJECT_MAP[period].includes(subject)) {
+            setSubject(PERIOD_SUBJECT_MAP[period][0] || '');
+        }
+    }, [period, subject, PERIOD_SUBJECT_MAP]);
+
+    // İçeriği Kaydetme Fonksiyonu
+    const saveContent = async () => {
+      if (!db || saving || loading || !subject || !period) return;
+
+      if (!konuContent.trim() || !testContent.trim()) {
+        setMessage({ text: 'Konu Anlatımı ve Test Soruları alanları boş bırakılamaz.', type: 'error' });
+        return;
+      }
+
+      try {
+        JSON.parse(testContent);
+      } catch (e) {
+        setMessage({ text: 'Test Soruları alanı geçerli bir JSON formatında değil. Lütfen kontrol edin.', type: 'error' });
+        return;
+      }
+
+      setSaving(true);
+      setMessage({ text: 'Değişiklikler veri tabanına yazılıyor...', type: 'info' });
+
+      try {
+        const docRef = getPublicDocRef(subject, period);
+
+        await updateDoc(docRef, {
+          konuAnlatimi: konuContent,
+          testSorulari: testContent
+        });
+
+        setMessage({ text: `'${subject}' dersinin '${period}' içeriği başarıyla güncellendi!`, type: 'success' });
+
+      } catch (error) {
+        console.error("İçerik kaydedilirken hata:", error);
+        setMessage({ text: `Kaydetme hatası: ${error.message}`, type: 'error' });
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    // Şifre Değiştirme Fonksiyonu
+    const handleChangePassword = () => {
+        if (newPassword.length < 6) {
+            setPasswordChangeMessage({ text: 'Yeni şifre en az 6 karakter olmalıdır.', type: 'error' });
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            setPasswordChangeMessage({ text: 'Yeni şifreler eşleşmiyor.', type: 'error' });
+            return;
+        }
+
+        setAdminMockPassword(newPassword);
+        setNewPassword('');
+        setConfirmPassword('');
+        setPasswordChangeMessage({ text: 'Şifre başarıyla değiştirildi! Tekrar giriş yapmanız gerekecek.', type: 'success' });
+        
+        setTimeout(() => {
+            setIsAdminAuthenticated(false);
+            setPasswordChangeMessage({ text: '', type: '' });
+        }, 1500);
+    };
+
+    const messageClass = useMemo(() => {
+      let base = "mt-6 p-4 rounded-xl border transition-all duration-300 text-sm flex items-center";
+      if (!message.text) return "hidden";
+
+      switch (message.type) {
+        case 'success':
+          return `${base} bg-green-100 border-green-400 text-green-700`;
+        case 'error':
+          return `${base} bg-red-100 border-red-400 text-red-700`;
+        case 'warning':
+          return `${base} bg-yellow-100 border-yellow-400 text-yellow-700`;
+        case 'info':
+        default:
+          return `${base} bg-blue-100 border-blue-400 text-blue-700`;
+      }
+    }, [message]);
+    
+    const passwordChangeMessageClass = useMemo(() => {
+        let base = "p-3 rounded-lg mb-4 text-sm flex items-center";
+        if (!passwordChangeMessage.text) return "hidden";
+
+        switch (passwordChangeMessage.type) {
+            case 'success':
+                return `${base} bg-green-100 text-green-700`;
+            case 'error':
+                return `${base} bg-red-100 text-red-700`;
+            default:
+                return "hidden";
+        }
+    }, [passwordChangeMessage]);
+
+
+    return (
+      <div className="container mx-auto p-4 sm:p-8">
+        <div className="bg-white rounded-xl shadow-2xl p-6 sm:p-10 transition-all duration-300">
+          <h1 className="text-3xl font-extrabold text-red-700 mb-6 border-b pb-3 flex items-center">
+            <Settings className="h-7 w-7 mr-2" /> İçerik Yönetim Paneli
+          </h1>
+          <p className="text-gray-600 mb-8">Bu panel, uygulamanın ana içeriğini (Konu Anlatımı ve Test Soruları) düzenlemenizi sağlar.</p>
+
+          <div className="flex flex-col sm:flex-row gap-6 mb-6">
+            {/* Dönem Seçimi */}
