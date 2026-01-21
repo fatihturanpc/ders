@@ -23,10 +23,12 @@
         .custom-input:focus { border-color: #10B981; outline: none; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
         .btn-main { height: 3.8rem; border-radius: 1.25rem; font-weight: 800; display: flex; align-items: center; padding: 0 1.5rem; transition: all 0.2s; width: 100%; border: none; cursor: pointer; }
         .btn-main:active { transform: scale(0.97); }
-        .admin-card { cursor: pointer; transition: all 0.2s; border: 2px solid #F1F5F9; background: white; width: 100%; text-align: left; }
+        .admin-card { cursor: pointer; transition: all 0.2s; border: 2px solid #F1F5F9; background: white; width: 100%; text-align: left; position: relative; }
         .admin-card:hover { border-color: #10B981; transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); }
         #root:empty { display: flex; align-items: center; justify-content: center; height: 100vh; background: #0F172A; color: #10B981; font-weight: 800; }
         #root:empty::after { content: "SİSTEM YÜKLENİYOR..."; letter-spacing: 0.1em; }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }
     </style>
 </head>
 <body class="text-[#1E293B]">
@@ -56,9 +58,7 @@
                 'admin': <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
                 'logout': <g><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></g>,
                 'google': <path d="M12.48 10.92v3.28h7.84c-.24 1.84-2.21 5.42-7.84 5.42-4.85 0-8.81-4.01-8.81-8.92s3.96-8.92 8.81-8.92c2.76 0 4.61 1.18 5.66 2.18l2.59-2.5c-1.66-1.55-3.82-2.5-8.25-2.5C5.07 1.02 0 6.09 0 12.35s5.07 11.33 11.33 11.33c6.54 0 10.87-4.6 10.87-11.06 0-.74-.08-1.31-.18-1.87l-9.54.17z"/>,
-                'plus': <g><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></g>,
                 'chevron-left': <polyline points="15 18 9 12 15 6"/>,
-                'user': <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />,
                 'trash': <g><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></g>
             };
             return (
@@ -84,15 +84,18 @@
 
             React.useEffect(() => {
                 let isMounted = true;
-                const unsub = auth.onAuthStateChanged((u) => {
+                const unsub = auth.onAuthStateChanged(async (u) => {
                     if (!isMounted) return;
-                    setUser(u);
                     if (u && u.email) {
+                        setUser(u);
                         setRole('admin');
                         setView('admin_panel');
-                        setupInitialData();
+                        await setupInitialData();
+                    } else {
+                        setUser(u);
+                        setRole(null);
+                        setLoading(false);
                     }
-                    setLoading(false);
                 });
                 return () => { isMounted = false; unsub(); };
             }, []);
@@ -100,59 +103,61 @@
             React.useEffect(() => {
                 if (!user || role !== 'admin') return;
                 
-                const unsubT = db.doc(`artifacts/${appId}/public/data/config/teachers`).onSnapshot(s => {
-                    const data = s.data()?.list || [];
-                    setTeachers(data);
-                    if (selTeacher) {
-                        const updated = data.find(t => t.id === selTeacher.id);
-                        if(updated) setSelTeacher(updated);
-                    }
-                }, (err) => console.error("T-Error:", err));
+                const unsubT = db.collection(`artifacts/${appId}/public/data/teachers`).onSnapshot(s => {
+                    const tList = []; s.forEach(d => tList.push({...d.data(), id: d.id}));
+                    setTeachers(tList);
+                    if (selTeacher) setSelTeacher(tList.find(t => t.id === selTeacher.id));
+                });
 
                 const unsubC = db.collection(`artifacts/${appId}/public/data/classes`).onSnapshot(s => {
-                    const l = []; 
-                    s.forEach(d => l.push({...d.data(), id: d.id})); 
-                    setClasses(l);
-                    if(selClass) {
-                        const updated = l.find(c => c.id === selClass.id);
-                        if(updated) setSelClass(updated);
-                    }
-                }, (err) => console.error("C-Error:", err));
+                    const cList = []; s.forEach(d => cList.push({...d.data(), id: d.id})); 
+                    setClasses(cList);
+                    if (selClass) setSelClass(cList.find(c => c.id === selClass.id));
+                });
 
+                setLoading(false);
                 return () => { unsubT(); unsubC(); };
             }, [user, role, selClass?.id, selTeacher?.id]);
 
             const setupInitialData = async () => {
                 try {
-                    const tRef = db.doc(`artifacts/${appId}/public/data/config/teachers`);
-                    const snap = await tRef.get();
-                    if (!snap.exists || !snap.data()?.list?.length) {
-                        const initialTeachers = Array.from({length: 6}, (_, i) => ({
-                            id: `hoca_${i+1}`,
-                            name: `HOCA ${i+1}`,
-                            pass: `123${i+1}`
-                        }));
-                        await tRef.set({ list: initialTeachers });
+                    const teachersRef = db.collection(`artifacts/${appId}/public/data/teachers`);
+                    const snap = await teachersRef.limit(1).get();
+                    
+                    if (snap.empty) {
+                        const hocaIds = [];
+                        // 6 Hoca Oluştur
+                        for(let i=1; i<=6; i++) {
+                            const tid = `hoca_${i}`;
+                            hocaIds.push(tid);
+                            await teachersRef.doc(tid).set({
+                                id: tid,
+                                name: `HOCA ${i}`,
+                                pass: `123${i}`
+                            });
+                        }
 
-                        // Örnek Sınıflar
+                        // 6 Sınıf Oluştur
                         const letters = ["A", "B", "C", "D", "E", "F"];
                         for (let i = 0; i < 6; i++) {
                             await db.doc(`artifacts/${appId}/public/data/classes/CLASS_${letters[i]}`).set({
                                 id: `CLASS_${letters[i]}`,
                                 name: `${letters[i]} SINIFI`,
-                                teacherId: initialTeachers[i].id,
+                                teacherId: hocaIds[i],
                                 students: []
                             });
                         }
                     }
-                } catch (e) { console.error("Init Error"); }
+                } catch (e) { console.error("Kurulum Hatası:", e); }
             };
 
             const addTeacher = async () => {
                 if(!form.a) return showNotify("İsim giriniz");
                 try {
-                    const newList = [...teachers, { id: "hoca_" + Date.now(), name: form.a.toUpperCase(), pass: form.b || "1234" }];
-                    await db.doc(`artifacts/${appId}/public/data/config/teachers`).set({ list: newList });
+                    const id = "hoca_" + Date.now();
+                    await db.collection(`artifacts/${appId}/public/data/teachers`).doc(id).set({
+                        id, name: form.a.toUpperCase(), pass: form.b || "1234"
+                    });
                     setForm({a:'', b:''});
                     showNotify("Eğitmen Eklendi");
                 } catch(e) { showNotify("Hata oluştu"); }
@@ -160,8 +165,7 @@
 
             const deleteTeacher = async (tid) => {
                 try {
-                    const newList = teachers.filter(t => t.id !== tid);
-                    await db.doc(`artifacts/${appId}/public/data/config/teachers`).set({ list: newList });
+                    await db.doc(`artifacts/${appId}/public/data/teachers/${tid}`).delete();
                     setSelTeacher(null);
                     showNotify("Eğitmen Silindi");
                 } catch(e) { showNotify("Silme hatası"); }
@@ -250,17 +254,17 @@
                             {(!selClass && !selTeacher) ? (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
                                     {/* EĞİTMENLER */}
-                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
+                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50 flex flex-col">
                                         <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase mb-6 flex items-center gap-2">
                                             <Icon name="teacher" className="text-emerald-500" /> Eğitmen Listesi ({teachers.length})
                                         </h3>
-                                        <div className="space-y-3 mb-6 max-h-[400px] overflow-y-auto pr-2">
-                                            {teachers.length > 0 ? teachers.map(t => (
+                                        <div className="space-y-3 mb-6 flex-1 max-h-[400px] overflow-y-auto custom-scroll pr-2">
+                                            {teachers.length > 0 ? teachers.sort((a,b)=>a.name.localeCompare(b.name)).map(t => (
                                                 <button key={t.id} onClick={() => setSelTeacher(t)} className="admin-card p-4 rounded-2xl flex justify-between items-center group">
                                                     <span className="font-bold text-sm text-slate-700 group-hover:text-emerald-600">{t.name}</span>
                                                     <Icon name="chevron-left" className="w-4 h-4 rotate-180 text-slate-300 group-hover:text-emerald-500" />
                                                 </button>
-                                            )) : <p className="text-slate-400 italic text-xs">Kayıtlı hoca bulunamadı.</p>}
+                                            )) : <p className="text-slate-400 italic text-xs">Yükleniyor veya hoca bulunamadı...</p>}
                                         </div>
                                         <div className="pt-4 border-t space-y-2">
                                             <input className="custom-input bg-slate-50 text-xs" placeholder="Yeni Hoca Adı" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
@@ -269,12 +273,12 @@
                                     </div>
 
                                     {/* SINIFLAR */}
-                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
+                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50 flex flex-col">
                                         <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase mb-6 flex items-center gap-2">
                                             <Icon name="student" className="text-blue-500" /> Sınıf Yönetimi
                                         </h3>
-                                        <div className="grid grid-cols-1 gap-3 max-h-[400px] overflow-y-auto pr-2">
-                                            {classes.length > 0 ? classes.map(c => (
+                                        <div className="grid grid-cols-1 gap-3 flex-1 max-h-[400px] overflow-y-auto custom-scroll pr-2">
+                                            {classes.length > 0 ? classes.sort((a,b)=>a.name.localeCompare(b.name)).map(c => (
                                                 <button key={c.id} onClick={() => setSelClass(c)} className="admin-card p-4 rounded-2xl flex justify-between items-center group">
                                                     <div>
                                                         <div className="font-black text-slate-700 group-hover:text-blue-600">{c.name}</div>
@@ -282,7 +286,7 @@
                                                     </div>
                                                     <Icon name="chevron-left" className="w-4 h-4 rotate-180 text-slate-300 group-hover:text-blue-500" />
                                                 </button>
-                                            )) : <p className="text-slate-400 italic text-xs">Sınıf verisi yükleniyor...</p>}
+                                            )) : <p className="text-slate-400 italic text-xs">Sınıflar yükleniyor...</p>}
                                         </div>
                                     </div>
                                 </div>
