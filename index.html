@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>GENÇ HAFIZ - Takip Merkezi</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; margin: 0; padding: 0; overflow-x: hidden; }
+        .fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .custom-input { border: 2px solid #E2E8F0; border-radius: 1rem; padding: 0.8rem 1rem; width: 100%; font-weight: 600; color: #1e293b; }
+        .custom-input:focus { border-color: #10B981; outline: none; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
+        .btn-main { height: 3.8rem; border-radius: 1.25rem; font-weight: 800; display: flex; align-items: center; padding: 0 1.5rem; transition: all 0.2s; width: 100%; border: none; cursor: pointer; }
+        .btn-main:active { transform: scale(0.97); }
+        #root:empty { display: flex; align-items: center; justify-content: center; height: 100vh; background: #0F172A; color: #10B981; font-weight: 800; }
+        #root:empty::after { content: "SİSTEM YÜKLENİYOR..."; letter-spacing: 0.1em; }
+    </style>
+</head>
+<body class="text-[#1E293B]">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // Firebase Konfigürasyonu
+        const firebaseConfig = {
+            apiKey: "AIzaSyCCKhGneHvOXAgTUox7j4I9KLLEXVRGNGc",
+            authDomain: "okul-sistemi-36a42.firebaseapp.com",
+            databaseURL: "https://okul-sistemi-36a42-default-rtdb.firebaseio.com",
+            projectId: "okul-sistemi-36a42",
+            storageBucket: "okul-sistemi-36a42.firebasestorage.app",
+            messagingSenderId: "536062972019",
+            appId: "1:536062972019:web:5585e5c483401053355a06"
+        };
+        
+        const appId = "hafiz_takip_v5"; 
+
+        if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // Ortak İkon Bileşeni
+        const Icon = ({ name, className = "w-6 h-6" }) => {
+            const icons = {
+                'student': <g><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></g>,
+                'teacher': <g><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></g>,
+                'admin': <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
+                'logout': <g><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></g>,
+                'google': <path d="M12.48 10.92v3.28h7.84c-.24 1.84-2.21 5.42-7.84 5.42-4.85 0-8.81-4.01-8.81-8.92s3.96-8.92 8.81-8.92c2.76 0 4.61 1.18 5.66 2.18l2.59-2.5c-1.66-1.55-3.82-2.5-8.25-2.5C5.07 1.02 0 6.09 0 12.35s5.07 11.33 11.33 11.33c6.54 0 10.87-4.6 10.87-11.06 0-.74-.08-1.31-.18-1.87l-9.54.17z"/>,
+                'plus': <g><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></g>,
+                'chevron-left': <polyline points="15 18 9 12 15 6"/>,
+                'user': <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+            };
+            return (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name] || <circle cx="12" cy="12" r="10" />}
+                </svg>
+            );
+        };
+
+        function App() {
+            const [user, setUser] = React.useState(null);
+            const [role, setRole] = React.useState(null);
+            const [view, setView] = React.useState('welcome');
+            const [loading, setLoading] = React.useState(true);
+            const [form, setForm] = React.useState({a:'', b:''});
+            const [teachers, setTeachers] = React.useState([]);
+            const [classes, setClasses] = React.useState([]);
+            const [notification, setNotification] = React.useState(null);
+            const [selClass, setSelClass] = React.useState(null);
+            const [studentData, setStudentData] = React.useState(null);
+
+            const showNotify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 5000); };
+
+            // Giriş ve Yetkilendirme
+            React.useEffect(() => {
+                let isMounted = true;
+                const initAuth = async () => {
+                    try {
+                        await auth.setPersistence('local').catch(() => {});
+                        if (!auth.currentUser) await auth.signInAnonymously().catch(() => {});
+                    } catch (e) {}
+                    if(isMounted) setLoading(false);
+                };
+                
+                const unsub = auth.onAuthStateChanged((u) => {
+                    if (!isMounted) return;
+                    setUser(u);
+                    setLoading(false);
+                    if (u && u.email) {
+                        setRole('admin');
+                        setView('admin_panel');
+                        setupInitialData();
+                    }
+                });
+                initAuth();
+                const safeOff = setTimeout(() => { if(isMounted) setLoading(false); }, 1500);
+                return () => { isMounted = false; unsub(); clearTimeout(safeOff); };
+            }, []);
+
+            // Veri Dinleme
+            React.useEffect(() => {
+                if (!user) return;
+                const unsubT = db.doc(`artifacts/${appId}/public/data/config/teachers`).onSnapshot(s => setTeachers(s.data()?.list || []), () => {});
+                const unsubC = db.collection(`artifacts/${appId}/public/data/classes`).onSnapshot(s => {
+                    const l = []; s.forEach(d => l.push({...d.data(), id: d.id})); 
+                    setClasses(l);
+                    if(selClass) setSelClass(l.find(c => c.id === selClass.id));
+                }, () => {});
+                return () => { unsubT(); unsubC(); };
+            }, [user, selClass?.id]);
+
+            const setupInitialData = async () => {
+                if (!auth?.currentUser?.email) return;
+                try {
+                    const tRef = db.doc(`artifacts/${appId}/public/data/config/teachers`);
+                    const snap = await tRef.get();
+                    if (!snap.exists) {
+                        const initialTeachers = Array.from({length: 6}, (_, i) => ({
+                            id: `hoca_${i+1}`, name: `HOCA ${i+1}`, pass: `123${i+1}`
+                        }));
+                        await tRef.set({ list: initialTeachers });
+                        const letters = ["A", "B", "C", "D", "E", "F"];
+                        for (let i = 0; i < 6; i++) {
+                            await db.doc(`artifacts/${appId}/public/data/classes/CLASS_${letters[i]}`).set({
+                                id: `CLASS_${letters[i]}`, name: `${letters[i]} SINIFI`, teacherId: initialTeachers[i].id, students: []
+                            });
+                        }
+                    }
+                } catch (e) {}
+            };
+
+            const addStudentToClass = async () => {
+                if(!form.a || !selClass) return;
+                try {
+                    const updatedStudents = [...(selClass.students || []), {
+                        id: Date.now(),
+                        name: form.a.trim().toUpperCase(),
+                        pass: form.b.trim() || "1234",
+                        cuz: 1, sayfa: 1
+                    }];
+                    await db.doc(`artifacts/${appId}/public/data/classes/${selClass.id}`).update({ students: updatedStudents });
+                    setForm({a:'', b:''});
+                    showNotify("Öğrenci Kaydı Başarılı");
+                } catch(e) { showNotify("Kayıt Hatası!"); }
+            };
+
+            const loginWithGoogle = async () => {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                try {
+                    await auth.signInWithPopup(provider);
+                } catch (e) {
+                    if (window.location.protocol === 'file:') {
+                        showNotify("HATA: Google girişi için Hosting veya Live Server gereklidir.");
+                    } else {
+                        showNotify(`BAĞLANTI HATASI: ${e.code}`);
+                    }
+                }
+            };
+
+            const handleManualLogin = (type) => {
+                const name = form.a.trim().toUpperCase();
+                const pass = form.b.trim();
+                if (!name || !pass) return showNotify('Bilgileri girin.');
+                if (type === 'teacher') {
+                    const found = teachers.find(t => t.name.toUpperCase() === name && String(t.pass) === pass);
+                    if (found) { setRole('teacher'); setView('teacher_panel'); } 
+                    else showNotify('Hatalı Eğitmen Bilgisi.');
+                } else {
+                    const allStus = classes.flatMap(c => (c.students || []).map(s => ({...s, classId: c.id, className: c.name})));
+                    const found = allStus.find(s => s.name.toUpperCase() === name && String(s.pass) === pass);
+                    if (found) { setRole('student'); setStudentData(found); setView('student_panel'); } 
+                    else showNotify('Hatalı Öğrenci Bilgisi.');
+                }
+            };
+
+            const logout = () => { auth.signOut().then(() => { setRole(null); setView('welcome'); setStudentData(null); auth.signInAnonymously(); }); };
+
+            if (loading) return null;
+
+            return (
+                <div className="min-h-screen bg-[#F8FAFC] fade-in text-slate-800">
+                    {notification && (
+                        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[300] bg-red-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl text-xs text-center max-w-[90vw]">
+                            {notification}
+                        </div>
+                    )}
+
+                    {view === 'welcome' && (
+                        <div className="h-screen bg-[#0F172A] flex flex-col items-center justify-center p-6 text-white text-center">
+                            <h1 className="text-4xl font-black mb-2 italic uppercase tracking-widest text-emerald-500 leading-none">GENÇ HAFIZ</h1>
+                            <p className="text-slate-500 mb-12 text-[10px] font-bold tracking-[0.4em] uppercase opacity-60">TAKİP MERKEZİ</p>
+                            <div className="w-full max-w-[320px] space-y-4">
+                                <button onClick={()=>setView('login_student')} className="btn-main bg-emerald-600 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="student" /></div><span>ÖĞRENCİ PANELİ</span></button>
+                                <button onClick={()=>setView('login_teacher')} className="btn-main bg-blue-700 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="teacher" /></div><span>EĞİTMEN GİRİŞİ</span></button>
+                                <button onClick={()=>setView('login_admin')} className="btn-main bg-slate-800 text-slate-300 opacity-80 mt-12"><div className="bg-white/10 p-2 rounded-lg mr-4"><Icon name="admin" /></div><span>YÖNETİCİ GİRİŞİ</span></button>
+                            </div>
+                        </div>
+                    )}
+
+                    {view.startsWith('login_') && (
+                        <div className="fixed inset-0 z-50 bg-[#0F172A]/95 backdrop-blur-sm flex items-start justify-center pt-[10vh] p-5">
+                            <div className="w-full max-w-[320px] bg-white p-8 rounded-[2.5rem] shadow-2xl text-left fade-in">
+                                <div className="flex justify-between items-center mb-8">
+                                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-800">{view.includes('admin')?'Yönetici':view.includes('teacher')?'Eğitmen':'Öğrenci'}</h2>
+                                    <button onClick={()=>setView('welcome')} className="p-2 bg-slate-100 rounded-xl text-slate-400"><Icon name="chevron-left" className="w-5 h-5"/></button>
+                                </div>
+                                {view === 'login_admin' ? (
+                                    <button onClick={loginWithGoogle} className="btn-main bg-[#4285F4] text-white justify-center text-xs">
+                                        <Icon name="google" className="w-5 h-5 mr-3" /> GOOGLE İLE BAĞLAN
+                                    </button>
+                                ) : (
+                                    <div className="space-y-4">
+                                        <input className="custom-input" placeholder="İsim Soyisim" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
+                                        <input className="custom-input" type="password" placeholder="Şifre" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
+                                        <button onClick={()=>handleManualLogin(view.split('_')[1])} className="btn-main bg-emerald-600 text-white justify-center uppercase italic">GİRİŞ YAP</button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {role === 'admin' && (
+                        <div className="max-w-4xl mx-auto p-6 text-left">
+                            <div className="flex justify-between items-center mb-8">
+                                <h1 className="text-2xl font-black italic uppercase">YÖNETİM PANELİ</h1>
+                                <button onClick={logout} className="p-3 bg-red-50 text-red-500 rounded-xl"><Icon name="logout" className="w-5 h-5"/></button>
+                            </div>
+                            {!selClass ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+                                        <h3 className="font-black text-emerald-600 mb-4 text-xs tracking-widest uppercase">Eğitmenler</h3>
+                                        <div className="space-y-2">
+                                            {teachers.map(t => (
+                                                <div key={t.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center">
+                                                    <span className="font-bold text-sm">{t.name}</span>
+                                                    <span className="text-[10px] bg-white border px-2 py-1 rounded font-black tracking-widest">Şifre: {t.pass}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+                                        <h3 className="font-black text-blue-600 mb-4 text-xs tracking-widest uppercase">Sınıflar</h3>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {classes.map(c => (
+                                                <button key={c.id} onClick={()=>setSelClass(c)} className="p-4 bg-blue-50 text-blue-700 rounded-2xl font-black text-sm border-none shadow-sm text-center">
+                                                    {c.name}
+                                                    <div className="text-[9px] font-normal mt-1 opacity-60">{c.students?.length || 0} Öğrenci</div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="bg-white p-6 rounded-[2.5rem] border-2 border-slate-100 shadow-xl fade-in">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <button onClick={()=>setSelClass(null)} className="p-2 bg-slate-100 rounded-xl"><Icon name="chevron-left" className="w-5 h-5"/></button>
+                                        <h2 className="font-black text-xl italic text-slate-800">{selClass.name} Yönetimi</h2>
+                                        <div className="w-10"></div>
+                                    </div>
+                                    <div className="bg-emerald-50 p-6 rounded-3xl mb-8 border border-emerald-100">
+                                        <div className="space-y-3">
+                                            <input className="custom-input bg-white h-12" placeholder="Öğrenci Ad Soyad" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
+                                            <input className="custom-input bg-white h-12" placeholder="Öğrenci Şifresi" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
+                                            <button onClick={addStudentToClass} className="btn-main bg-emerald-600 text-white justify-center shadow-emerald-200 shadow-lg">ÖĞRENCİYİ KAYDET</button>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {selClass.students?.length > 0 ? selClass.students.map(s => (
+                                            <div key={s.id} className="p-4 bg-white border rounded-2xl flex justify-between items-center shadow-sm">
+                                                <div className="font-black text-sm">{s.name}</div>
+                                                <span className="text-[9px] font-black bg-slate-100 px-3 py-1.5 rounded-lg border tracking-widest">Şifre: {s.pass}</span>
+                                            </div>
+                                        )) : <p className="text-center text-slate-400 py-10 italic">Henüz kayıt yok.</p>}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
