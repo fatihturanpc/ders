@@ -23,8 +23,8 @@
         .custom-input:focus { border-color: #10B981; outline: none; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
         .btn-main { height: 3.8rem; border-radius: 1.25rem; font-weight: 800; display: flex; align-items: center; padding: 0 1.5rem; transition: all 0.2s; width: 100%; border: none; cursor: pointer; }
         .btn-main:active { transform: scale(0.97); }
-        .admin-card { cursor: pointer; transition: all 0.2s; border: 2px solid #F1F5F9; background: white; }
-        .admin-card:hover { border-color: #10B981; transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+        .admin-card { cursor: pointer; transition: all 0.2s; border: 2px solid #F1F5F9; background: white; width: 100%; text-align: left; }
+        .admin-card:hover { border-color: #10B981; transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); }
         #root:empty { display: flex; align-items: center; justify-content: center; height: 100vh; background: #0F172A; color: #10B981; font-weight: 800; }
         #root:empty::after { content: "SİSTEM YÜKLENİYOR..."; letter-spacing: 0.1em; }
     </style>
@@ -79,59 +79,66 @@
             const [selClass, setSelClass] = React.useState(null);
             const [selTeacher, setSelTeacher] = React.useState(null);
 
-            const showNotify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 5000); };
+            const showNotify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 4000); };
 
             React.useEffect(() => {
                 let isMounted = true;
                 const unsub = auth.onAuthStateChanged((u) => {
                     if (!isMounted) return;
                     setUser(u);
-                    setLoading(false);
                     if (u && u.email) {
                         setRole('admin');
                         setView('admin_panel');
                         setupInitialData();
                     }
+                    setLoading(false);
                 });
                 return () => { isMounted = false; unsub(); };
             }, []);
 
             React.useEffect(() => {
                 if (!user || role !== 'admin') return;
-                const unsubT = db.doc(`artifacts/${appId}/public/data/config/teachers`).onSnapshot(s => setTeachers(s.data()?.list || []), () => {});
+                
+                const unsubT = db.doc(`artifacts/${appId}/public/data/config/teachers`).onSnapshot(s => {
+                    setTeachers(s.data()?.list || []);
+                }, (err) => console.error("T-Error:", err));
+
                 const unsubC = db.collection(`artifacts/${appId}/public/data/classes`).onSnapshot(s => {
-                    const l = []; s.forEach(d => l.push({...d.data(), id: d.id})); 
+                    const l = []; 
+                    s.forEach(d => l.push({...d.data(), id: d.id})); 
                     setClasses(l);
                     if(selClass) {
                         const updated = l.find(c => c.id === selClass.id);
                         if(updated) setSelClass(updated);
                     }
-                }, () => {});
+                }, (err) => console.error("C-Error:", err));
+
                 return () => { unsubT(); unsubC(); };
-            }, [user, role]);
+            }, [user, role, selClass?.id]);
 
             const setupInitialData = async () => {
-                if (!auth?.currentUser?.email) return;
                 try {
                     const tRef = db.doc(`artifacts/${appId}/public/data/config/teachers`);
                     const snap = await tRef.get();
                     if (!snap.exists) {
-                        const initialTeachers = Array.from({length: 6}, (_, i) => ({
-                            id: `hoca_${i+1}`, name: `HOCA ${i+1}`, pass: `123${i+1}`
-                        }));
+                        const initialTeachers = [{ id: "hoca_1", name: "ÖRNEK HOCA", pass: "1234" }];
                         await tRef.set({ list: initialTeachers });
-                        const letters = ["A", "B", "C", "D", "E", "F"];
-                        for (let i = 0; i < 6; i++) {
-                            await db.doc(`artifacts/${appId}/public/data/classes/CLASS_${letters[i]}`).set({
-                                id: `CLASS_${letters[i]}`, name: `${letters[i]} SINIFI`, teacherId: initialTeachers[i].id, students: []
-                            });
-                        }
                     }
-                } catch (e) { console.error("İlk kurulum hatası"); }
+                } catch (e) { console.error("Init Error"); }
+            };
+
+            const addTeacher = async () => {
+                if(!form.a) return showNotify("İsim giriniz");
+                try {
+                    const newList = [...teachers, { id: "hoca_" + Date.now(), name: form.a.toUpperCase(), pass: form.b || "1234" }];
+                    await db.doc(`artifacts/${appId}/public/data/config/teachers`).set({ list: newList });
+                    setForm({a:'', b:''});
+                    showNotify("Eğitmen Eklendi");
+                } catch(e) { showNotify("Hata oluştu"); }
             };
 
             const addStudentToClass = async () => {
-                if(!form.a || !selClass) return;
+                if(!form.a || !selClass) return showNotify("İsim giriniz");
                 try {
                     const updatedStudents = [...(selClass.students || []), {
                         id: Date.now(),
@@ -149,17 +156,12 @@
                 const provider = new firebase.auth.GoogleAuthProvider();
                 try {
                     await auth.signInWithPopup(provider);
-                } catch (e) {
-                    showNotify(`GİRİŞ HATASI: ${e.code}`);
-                }
+                } catch (e) { showNotify("Giriş başarısız."); }
             };
 
             const logout = () => { 
                 auth.signOut().then(() => { 
-                    setRole(null); 
-                    setView('welcome'); 
-                    setSelClass(null);
-                    setSelTeacher(null);
+                    setRole(null); setView('welcome'); setSelClass(null); setSelTeacher(null);
                     auth.signInAnonymously(); 
                 }); 
             };
@@ -169,18 +171,18 @@
             return (
                 <div className="min-h-screen bg-[#F8FAFC] fade-in text-slate-800">
                     {notification && (
-                        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[300] bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl text-xs text-center max-w-[90vw]">
+                        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[300] bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl text-xs">
                             {notification}
                         </div>
                     )}
 
                     {view === 'welcome' && (
                         <div className="h-screen bg-[#0F172A] flex flex-col items-center justify-center p-6 text-white text-center">
-                            <h1 className="text-4xl font-black mb-2 italic uppercase tracking-widest text-emerald-500 leading-none">GENÇ HAFIZ</h1>
+                            <h1 className="text-4xl font-black mb-2 italic uppercase tracking-widest text-emerald-500">GENÇ HAFIZ</h1>
                             <p className="text-slate-500 mb-12 text-[10px] font-bold tracking-[0.4em] uppercase opacity-60">TAKİP MERKEZİ</p>
                             <div className="w-full max-w-[320px] space-y-4">
-                                <button onClick={()=>setView('login_student')} className="btn-main bg-emerald-600 text-white shadow-emerald-900/20"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="student" /></div><span>ÖĞRENCİ PANELİ</span></button>
-                                <button onClick={()=>setView('login_teacher')} className="btn-main bg-blue-700 text-white shadow-blue-900/20"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="teacher" /></div><span>EĞİTMEN GİRİŞİ</span></button>
+                                <button onClick={()=>setView('login_student')} className="btn-main bg-emerald-600 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="student" /></div><span>ÖĞRENCİ PANELİ</span></button>
+                                <button onClick={()=>setView('login_teacher')} className="btn-main bg-blue-700 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="teacher" /></div><span>EĞİTMEN GİRİŞİ</span></button>
                                 <button onClick={()=>setView('login_admin')} className="btn-main bg-slate-800 text-slate-300 opacity-80 mt-12"><div className="bg-white/10 p-2 rounded-lg mr-4"><Icon name="admin" /></div><span>YÖNETİCİ GİRİŞİ</span></button>
                             </div>
                         </div>
@@ -188,19 +190,17 @@
 
                     {view.startsWith('login_') && (
                         <div className="fixed inset-0 z-50 bg-[#0F172A]/90 backdrop-blur-md flex items-start justify-center pt-[10vh] p-5">
-                            <div className="w-full max-w-[320px] bg-white p-8 rounded-[2.5rem] shadow-2xl text-left fade-in">
+                            <div className="w-full max-w-[320px] bg-white p-8 rounded-[2.5rem] shadow-2xl fade-in">
                                 <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-800">
-                                        {view.includes('admin') ? 'Yönetici' : 'Giriş'}
-                                    </h2>
-                                    <button onClick={()=>setView('welcome')} className="p-2 bg-slate-100 rounded-xl text-slate-400"><Icon name="chevron-left" className="w-5 h-5"/></button>
+                                    <h2 className="text-xl font-black uppercase italic text-slate-800">{view.includes('admin')?'Yönetici':'Giriş'}</h2>
+                                    <button onClick={()=>setView('welcome')} className="p-2 bg-slate-100 rounded-xl"><Icon name="chevron-left" className="w-5 h-5"/></button>
                                 </div>
                                 {view === 'login_admin' ? (
                                     <button onClick={loginWithGoogle} className="btn-main bg-[#4285F4] text-white justify-center text-xs">
                                         <Icon name="google" className="w-5 h-5 mr-3" /> GOOGLE İLE DEVAM ET
                                     </button>
                                 ) : (
-                                    <div className="space-y-4">
+                                    <div className="space-y-4 text-left">
                                         <input className="custom-input" placeholder="İsim Soyisim" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
                                         <input className="custom-input" type="password" placeholder="Şifre" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
                                         <button className="btn-main bg-emerald-600 text-white justify-center uppercase italic">GİRİŞ YAP</button>
@@ -211,133 +211,89 @@
                     )}
 
                     {role === 'admin' && (
-                        <div className="max-w-4xl mx-auto p-6 text-left fade-in">
+                        <div className="max-w-4xl mx-auto p-6 fade-in">
                             <div className="flex justify-between items-center mb-8">
-                                <h1 className="text-2xl font-black italic uppercase text-slate-800">YÖNETİM PANELİ</h1>
-                                <button onClick={logout} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-colors">
-                                    <Icon name="logout" className="w-5 h-5"/>
-                                </button>
+                                <h1 className="text-2xl font-black italic uppercase">YÖNETİM PANELİ</h1>
+                                <button onClick={logout} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-colors"><Icon name="logout" className="w-5 h-5"/></button>
                             </div>
 
                             {(!selClass && !selTeacher) ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    {/* Eğitmen Listesi Section */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-left">
+                                    {/* EĞİTMENLER */}
                                     <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
-                                        <div className="flex items-center gap-3 mb-6">
-                                            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><Icon name="teacher" /></div>
-                                            <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase">Eğitmenler</h3>
-                                        </div>
-                                        <div className="space-y-3">
+                                        <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase mb-6 flex items-center gap-2">
+                                            <Icon name="teacher" className="text-emerald-500" /> Eğitmen Listesi
+                                        </h3>
+                                        <div className="space-y-3 mb-6">
                                             {teachers.length > 0 ? teachers.map(t => (
-                                                <button 
-                                                    key={t.id} 
-                                                    onClick={() => setSelTeacher(t)}
-                                                    className="w-full p-4 admin-card rounded-2xl flex justify-between items-center group"
-                                                >
+                                                <button key={t.id} onClick={() => setSelTeacher(t)} className="admin-card p-4 rounded-2xl flex justify-between items-center group">
                                                     <span className="font-bold text-sm text-slate-700 group-hover:text-emerald-600">{t.name}</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="p-2 bg-slate-50 rounded-xl text-slate-300 group-hover:bg-emerald-50 group-hover:text-emerald-500 rotate-180">
-                                                            <Icon name="chevron-left" className="w-4 h-4" />
-                                                        </div>
-                                                    </div>
+                                                    <Icon name="chevron-left" className="w-4 h-4 rotate-180 text-slate-300 group-hover:text-emerald-500" />
                                                 </button>
-                                            )) : <div className="text-center text-slate-300 py-10 italic">Veri yükleniyor...</div>}
+                                            )) : <p className="text-slate-400 italic text-xs">Kayıtlı hoca bulunamadı.</p>}
+                                        </div>
+                                        <div className="pt-4 border-t space-y-2">
+                                            <input className="custom-input bg-slate-50 text-xs" placeholder="Yeni Hoca Adı" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
+                                            <button onClick={addTeacher} className="w-full bg-emerald-600 text-white p-3 rounded-xl font-bold text-xs uppercase">Hoca Ekle</button>
                                         </div>
                                     </div>
 
-                                    {/* Sınıf Listesi Section */}
+                                    {/* SINIFLAR */}
                                     <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
-                                        <div className="flex items-center gap-3 mb-6">
-                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Icon name="student" /></div>
-                                            <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase">Sınıf Yönetimi</h3>
-                                        </div>
+                                        <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase mb-6 flex items-center gap-2">
+                                            <Icon name="student" className="text-blue-500" /> Sınıf Yönetimi
+                                        </h3>
                                         <div className="grid grid-cols-1 gap-3">
                                             {classes.length > 0 ? classes.map(c => (
-                                                <button 
-                                                    key={c.id} 
-                                                    onClick={() => setSelClass(c)} 
-                                                    className="p-5 admin-card rounded-2xl flex justify-between items-center group"
-                                                >
-                                                    <div className="text-left">
-                                                        <div className="font-black text-slate-700 group-hover:text-blue-600 transition-colors">{c.name}</div>
-                                                        <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">
-                                                            {c.students?.length || 0} Aktif Öğrenci
-                                                        </div>
+                                                <button key={c.id} onClick={() => setSelClass(c)} className="admin-card p-4 rounded-2xl flex justify-between items-center group">
+                                                    <div>
+                                                        <div className="font-black text-slate-700 group-hover:text-blue-600">{c.name}</div>
+                                                        <div className="text-[10px] font-bold text-slate-400">{c.students?.length || 0} Öğrenci</div>
                                                     </div>
-                                                    <div className="p-2 bg-slate-50 rounded-xl text-slate-300 group-hover:bg-blue-50 group-hover:text-blue-500 transition-all rotate-180">
-                                                        <Icon name="chevron-left" className="w-4 h-4" />
-                                                    </div>
+                                                    <Icon name="chevron-left" className="w-4 h-4 rotate-180 text-slate-300 group-hover:text-blue-500" />
                                                 </button>
-                                            )) : <div className="text-center text-slate-300 py-10 italic">Sınıflar yükleniyor...</div>}
+                                            )) : <p className="text-slate-400 italic text-xs">Sınıf verisi yükleniyor...</p>}
                                         </div>
                                     </div>
                                 </div>
                             ) : selTeacher ? (
-                                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-2 border-slate-50 fade-in">
+                                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-2 border-slate-50 fade-in text-center">
                                     <div className="flex justify-between items-center mb-8">
-                                        <button onClick={()=>setSelTeacher(null)} className="p-3 bg-slate-100 rounded-2xl text-slate-400 hover:bg-slate-800 hover:text-white transition-all">
-                                            <Icon name="chevron-left" className="w-6 h-6"/>
-                                        </button>
-                                        <div className="text-center">
-                                            <h2 className="font-black text-2xl italic text-slate-800">{selTeacher.name}</h2>
-                                            <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em] mt-1">Eğitmen Detayları</p>
-                                        </div>
+                                        <button onClick={()=>setSelTeacher(null)} className="p-3 bg-slate-100 rounded-2xl"><Icon name="chevron-left" className="w-6 h-6"/></button>
+                                        <h2 className="font-black text-2xl italic">{selTeacher.name}</h2>
                                         <div className="w-12"></div>
                                     </div>
-                                    <div className="bg-emerald-50 p-8 rounded-[2.5rem] text-center">
+                                    <div className="bg-emerald-50 p-10 rounded-[2.5rem]">
                                         <Icon name="teacher" className="w-12 h-12 mx-auto text-emerald-600 mb-4" />
-                                        <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">GİRİŞ ŞİFRESİ</div>
-                                        <div className="text-2xl font-black text-emerald-700 tracking-widest">{selTeacher.pass}</div>
-                                        <div className="mt-6 text-[10px] text-slate-400 font-bold uppercase">SORUMLU OLDUĞU SINIF</div>
-                                        <div className="font-black text-slate-700">{classes.find(c => c.teacherId === selTeacher.id)?.name || "SINIF ATANMAMIŞ"}</div>
+                                        <div className="text-xs font-bold text-slate-400 uppercase mb-1">GİRİŞ ŞİFRESİ</div>
+                                        <div className="text-3xl font-black text-emerald-700">{selTeacher.pass}</div>
                                     </div>
                                 </div>
                             ) : (
-                                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-2 border-slate-50 fade-in">
+                                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-2 border-slate-50 fade-in text-left">
                                     <div className="flex justify-between items-center mb-8">
-                                        <button onClick={()=>setSelClass(null)} className="p-3 bg-slate-100 rounded-2xl text-slate-400 hover:bg-slate-800 hover:text-white transition-all">
-                                            <Icon name="chevron-left" className="w-6 h-6"/>
-                                        </button>
-                                        <div className="text-center">
-                                            <h2 className="font-black text-2xl italic text-slate-800">{selClass.name}</h2>
-                                            <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em] mt-1">Öğrenci Kayıt & Takip</p>
-                                        </div>
+                                        <button onClick={()=>setSelClass(null)} className="p-3 bg-slate-100 rounded-2xl"><Icon name="chevron-left" className="w-6 h-6"/></button>
+                                        <h2 className="font-black text-2xl italic">{selClass.name}</h2>
                                         <div className="w-12"></div>
                                     </div>
 
-                                    <div className="bg-slate-50 p-8 rounded-[2.5rem] mb-10 border border-slate-100">
-                                        <div className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">Yeni Öğrenci Ekle</div>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                            <input className="custom-input bg-white" placeholder="Öğrenci Ad Soyad" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
-                                            <input className="custom-input bg-white" placeholder="Giriş Şifresi (Varsayılan: 1234)" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
+                                    <div className="bg-slate-50 p-6 rounded-[2rem] mb-8 border border-slate-100">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                                            <input className="custom-input bg-white text-sm" placeholder="Öğrenci Ad Soyad" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
+                                            <input className="custom-input bg-white text-sm" placeholder="Şifre (Boşsa 1234)" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
                                         </div>
-                                        <button onClick={addStudentToClass} className="btn-main bg-emerald-600 text-white justify-center shadow-emerald-200 shadow-xl mt-4 w-full">
-                                            SINIFA KAYDET
-                                        </button>
+                                        <button onClick={addStudentToClass} className="w-full bg-blue-600 text-white p-4 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-blue-200">Öğrenciyi Kaydet</button>
                                     </div>
 
                                     <div className="space-y-3">
-                                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest px-2 mb-4">Sınıf Listesi ({selClass.students?.length || 0})</h4>
                                         {selClass.students?.length > 0 ? selClass.students.map(s => (
                                             <div key={s.id} className="p-5 bg-white border-2 border-slate-50 rounded-3xl flex justify-between items-center shadow-sm">
-                                                <div className="flex items-center gap-4">
-                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-black text-slate-400 text-xs">
-                                                        {s.name.charAt(0)}
-                                                    </div>
-                                                    <div>
-                                                        <div className="font-black text-slate-700">{s.name}</div>
-                                                        <div className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Cüz: {s.cuz} / Sayfa: {s.sayfa}</div>
-                                                    </div>
-                                                </div>
-                                                <div className="flex items-center gap-4">
-                                                    <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-4 py-2 rounded-xl border border-blue-100">ŞİFRE: {s.pass}</span>
+                                                <div className="font-black text-slate-700">{s.name}</div>
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-3 py-1.5 rounded-xl border tracking-widest uppercase">Şifre: {s.pass}</span>
                                                 </div>
                                             </div>
-                                        )) : (
-                                            <div className="text-center py-20 bg-slate-50 rounded-[2.5rem] border-2 border-dashed border-slate-200">
-                                                <p className="text-slate-400 font-bold italic">Bu sınıfta henüz kayıtlı öğrenci bulunmuyor.</p>
-                                            </div>
-                                        )}
+                                        )) : <p className="text-center py-10 text-slate-300 italic">Henüz öğrenci kaydedilmemiş.</p>}
                                     </div>
                                 </div>
                             )}
