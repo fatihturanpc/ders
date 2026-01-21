@@ -23,6 +23,8 @@
         .custom-input:focus { border-color: #10B981; outline: none; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
         .btn-main { height: 3.8rem; border-radius: 1.25rem; font-weight: 800; display: flex; align-items: center; padding: 0 1.5rem; transition: all 0.2s; width: 100%; border: none; cursor: pointer; }
         .btn-main:active { transform: scale(0.97); }
+        .admin-card { cursor: pointer; transition: all 0.2s; border: 2px solid #F1F5F9; }
+        .admin-card:hover { border-color: #10B981; transform: translateY(-2px); }
         #root:empty { display: flex; align-items: center; justify-content: center; height: 100vh; background: #0F172A; color: #10B981; font-weight: 800; }
         #root:empty::after { content: "SİSTEM YÜKLENİYOR..."; letter-spacing: 0.1em; }
     </style>
@@ -31,7 +33,6 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        // Firebase Konfigürasyonu
         const firebaseConfig = {
             apiKey: "AIzaSyCCKhGneHvOXAgTUox7j4I9KLLEXVRGNGc",
             authDomain: "okul-sistemi-36a42.firebaseapp.com",
@@ -48,7 +49,6 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        // Ortak İkon Bileşeni
         const Icon = ({ name, className = "w-6 h-6" }) => {
             const icons = {
                 'student': <g><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></g>,
@@ -77,21 +77,11 @@
             const [classes, setClasses] = React.useState([]);
             const [notification, setNotification] = React.useState(null);
             const [selClass, setSelClass] = React.useState(null);
-            const [studentData, setStudentData] = React.useState(null);
 
             const showNotify = (msg) => { setNotification(msg); setTimeout(() => setNotification(null), 5000); };
 
-            // Giriş ve Yetkilendirme
             React.useEffect(() => {
                 let isMounted = true;
-                const initAuth = async () => {
-                    try {
-                        await auth.setPersistence('local').catch(() => {});
-                        if (!auth.currentUser) await auth.signInAnonymously().catch(() => {});
-                    } catch (e) {}
-                    if(isMounted) setLoading(false);
-                };
-                
                 const unsub = auth.onAuthStateChanged((u) => {
                     if (!isMounted) return;
                     setUser(u);
@@ -102,22 +92,22 @@
                         setupInitialData();
                     }
                 });
-                initAuth();
-                const safeOff = setTimeout(() => { if(isMounted) setLoading(false); }, 1500);
-                return () => { isMounted = false; unsub(); clearTimeout(safeOff); };
+                return () => { isMounted = false; unsub(); };
             }, []);
 
-            // Veri Dinleme
             React.useEffect(() => {
-                if (!user) return;
+                if (!user || role !== 'admin') return;
                 const unsubT = db.doc(`artifacts/${appId}/public/data/config/teachers`).onSnapshot(s => setTeachers(s.data()?.list || []), () => {});
                 const unsubC = db.collection(`artifacts/${appId}/public/data/classes`).onSnapshot(s => {
                     const l = []; s.forEach(d => l.push({...d.data(), id: d.id})); 
                     setClasses(l);
-                    if(selClass) setSelClass(l.find(c => c.id === selClass.id));
+                    if(selClass) {
+                        const updated = l.find(c => c.id === selClass.id);
+                        if(updated) setSelClass(updated);
+                    }
                 }, () => {});
                 return () => { unsubT(); unsubC(); };
-            }, [user, selClass?.id]);
+            }, [user, role]);
 
             const setupInitialData = async () => {
                 if (!auth?.currentUser?.email) return;
@@ -136,7 +126,7 @@
                             });
                         }
                     }
-                } catch (e) {}
+                } catch (e) { console.error("İlk kurulum hatası"); }
             };
 
             const addStudentToClass = async () => {
@@ -150,47 +140,35 @@
                     }];
                     await db.doc(`artifacts/${appId}/public/data/classes/${selClass.id}`).update({ students: updatedStudents });
                     setForm({a:'', b:''});
-                    showNotify("Öğrenci Kaydı Başarılı");
+                    showNotify("Öğrenci Kaydedildi");
                 } catch(e) { showNotify("Kayıt Hatası!"); }
             };
 
             const loginWithGoogle = async () => {
                 const provider = new firebase.auth.GoogleAuthProvider();
+                // prompt: 'select_account' kaldırıldı -> Artık her seferinde sormayacak
                 try {
                     await auth.signInWithPopup(provider);
                 } catch (e) {
-                    if (window.location.protocol === 'file:') {
-                        showNotify("HATA: Google girişi için Hosting veya Live Server gereklidir.");
-                    } else {
-                        showNotify(`BAĞLANTI HATASI: ${e.code}`);
-                    }
+                    showNotify(`GİRİŞ HATASI: ${e.code}`);
                 }
             };
 
-            const handleManualLogin = (type) => {
-                const name = form.a.trim().toUpperCase();
-                const pass = form.b.trim();
-                if (!name || !pass) return showNotify('Bilgileri girin.');
-                if (type === 'teacher') {
-                    const found = teachers.find(t => t.name.toUpperCase() === name && String(t.pass) === pass);
-                    if (found) { setRole('teacher'); setView('teacher_panel'); } 
-                    else showNotify('Hatalı Eğitmen Bilgisi.');
-                } else {
-                    const allStus = classes.flatMap(c => (c.students || []).map(s => ({...s, classId: c.id, className: c.name})));
-                    const found = allStus.find(s => s.name.toUpperCase() === name && String(s.pass) === pass);
-                    if (found) { setRole('student'); setStudentData(found); setView('student_panel'); } 
-                    else showNotify('Hatalı Öğrenci Bilgisi.');
-                }
+            const logout = () => { 
+                auth.signOut().then(() => { 
+                    setRole(null); 
+                    setView('welcome'); 
+                    setSelClass(null);
+                    auth.signInAnonymously(); 
+                }); 
             };
-
-            const logout = () => { auth.signOut().then(() => { setRole(null); setView('welcome'); setStudentData(null); auth.signInAnonymously(); }); };
 
             if (loading) return null;
 
             return (
                 <div className="min-h-screen bg-[#F8FAFC] fade-in text-slate-800">
                     {notification && (
-                        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[300] bg-red-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl text-xs text-center max-w-[90vw]">
+                        <div className="fixed top-10 left-1/2 -translate-x-1/2 z-[300] bg-emerald-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl text-xs text-center max-w-[90vw]">
                             {notification}
                         </div>
                     )}
@@ -200,29 +178,31 @@
                             <h1 className="text-4xl font-black mb-2 italic uppercase tracking-widest text-emerald-500 leading-none">GENÇ HAFIZ</h1>
                             <p className="text-slate-500 mb-12 text-[10px] font-bold tracking-[0.4em] uppercase opacity-60">TAKİP MERKEZİ</p>
                             <div className="w-full max-w-[320px] space-y-4">
-                                <button onClick={()=>setView('login_student')} className="btn-main bg-emerald-600 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="student" /></div><span>ÖĞRENCİ PANELİ</span></button>
-                                <button onClick={()=>setView('login_teacher')} className="btn-main bg-blue-700 text-white"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="teacher" /></div><span>EĞİTMEN GİRİŞİ</span></button>
+                                <button onClick={()=>setView('login_student')} className="btn-main bg-emerald-600 text-white shadow-emerald-900/20"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="student" /></div><span>ÖĞRENCİ PANELİ</span></button>
+                                <button onClick={()=>setView('login_teacher')} className="btn-main bg-blue-700 text-white shadow-blue-900/20"><div className="bg-white/20 p-2 rounded-lg mr-4"><Icon name="teacher" /></div><span>EĞİTMEN GİRİŞİ</span></button>
                                 <button onClick={()=>setView('login_admin')} className="btn-main bg-slate-800 text-slate-300 opacity-80 mt-12"><div className="bg-white/10 p-2 rounded-lg mr-4"><Icon name="admin" /></div><span>YÖNETİCİ GİRİŞİ</span></button>
                             </div>
                         </div>
                     )}
 
                     {view.startsWith('login_') && (
-                        <div className="fixed inset-0 z-50 bg-[#0F172A]/95 backdrop-blur-sm flex items-start justify-center pt-[10vh] p-5">
+                        <div className="fixed inset-0 z-50 bg-[#0F172A]/90 backdrop-blur-md flex items-start justify-center pt-[10vh] p-5">
                             <div className="w-full max-w-[320px] bg-white p-8 rounded-[2.5rem] shadow-2xl text-left fade-in">
                                 <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-800">{view.includes('admin')?'Yönetici':view.includes('teacher')?'Eğitmen':'Öğrenci'}</h2>
+                                    <h2 className="text-xl font-black uppercase italic tracking-tighter text-slate-800">
+                                        {view.includes('admin') ? 'Yönetici' : 'Giriş'}
+                                    </h2>
                                     <button onClick={()=>setView('welcome')} className="p-2 bg-slate-100 rounded-xl text-slate-400"><Icon name="chevron-left" className="w-5 h-5"/></button>
                                 </div>
                                 {view === 'login_admin' ? (
                                     <button onClick={loginWithGoogle} className="btn-main bg-[#4285F4] text-white justify-center text-xs">
-                                        <Icon name="google" className="w-5 h-5 mr-3" /> GOOGLE İLE BAĞLAN
+                                        <Icon name="google" className="w-5 h-5 mr-3" /> GOOGLE İLE DEVAM ET
                                     </button>
                                 ) : (
                                     <div className="space-y-4">
                                         <input className="custom-input" placeholder="İsim Soyisim" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
                                         <input className="custom-input" type="password" placeholder="Şifre" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
-                                        <button onClick={()=>handleManualLogin(view.split('_')[1])} className="btn-main bg-emerald-600 text-white justify-center uppercase italic">GİRİŞ YAP</button>
+                                        <button className="btn-main bg-emerald-600 text-white justify-center uppercase italic">GİRİŞ YAP</button>
                                     </div>
                                 )}
                             </div>
@@ -230,57 +210,107 @@
                     )}
 
                     {role === 'admin' && (
-                        <div className="max-w-4xl mx-auto p-6 text-left">
+                        <div className="max-w-4xl mx-auto p-6 text-left fade-in">
                             <div className="flex justify-between items-center mb-8">
-                                <h1 className="text-2xl font-black italic uppercase">YÖNETİM PANELİ</h1>
-                                <button onClick={logout} className="p-3 bg-red-50 text-red-500 rounded-xl"><Icon name="logout" className="w-5 h-5"/></button>
+                                <h1 className="text-2xl font-black italic uppercase text-slate-800">YÖNETİM PANELİ</h1>
+                                <button onClick={logout} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-colors">
+                                    <Icon name="logout" className="w-5 h-5"/>
+                                </button>
                             </div>
+
                             {!selClass ? (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
-                                        <h3 className="font-black text-emerald-600 mb-4 text-xs tracking-widest uppercase">Eğitmenler</h3>
-                                        <div className="space-y-2">
-                                            {teachers.map(t => (
-                                                <div key={t.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center">
-                                                    <span className="font-bold text-sm">{t.name}</span>
-                                                    <span className="text-[10px] bg-white border px-2 py-1 rounded font-black tracking-widest">Şifre: {t.pass}</span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    {/* Eğitmen Listesi Section */}
+                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
+                                        <div className="flex items-center gap-3 mb-6">
+                                            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl"><Icon name="teacher" /></div>
+                                            <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase">Eğitmenler</h3>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {teachers.length > 0 ? teachers.map(t => (
+                                                <div key={t.id} className="p-4 bg-slate-50 rounded-2xl flex justify-between items-center">
+                                                    <span className="font-bold text-sm text-slate-700">{t.name}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[9px] bg-white border border-slate-200 px-3 py-1.5 rounded-lg font-black tracking-widest text-slate-400">ŞİFRE: {t.pass}</span>
+                                                    </div>
                                                 </div>
-                                            ))}
+                                            )) : <div className="text-center text-slate-300 py-10 italic">Veri yükleniyor...</div>}
                                         </div>
                                     </div>
-                                    <div className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
-                                        <h3 className="font-black text-blue-600 mb-4 text-xs tracking-widest uppercase">Sınıflar</h3>
-                                        <div className="grid grid-cols-2 gap-3">
-                                            {classes.map(c => (
-                                                <button key={c.id} onClick={()=>setSelClass(c)} className="p-4 bg-blue-50 text-blue-700 rounded-2xl font-black text-sm border-none shadow-sm text-center">
-                                                    {c.name}
-                                                    <div className="text-[9px] font-normal mt-1 opacity-60">{c.students?.length || 0} Öğrenci</div>
+
+                                    {/* Sınıf Listesi Section */}
+                                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border-2 border-slate-50">
+                                        <div className="flex items-center gap-3 mb-6">
+                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Icon name="student" /></div>
+                                            <h3 className="font-black text-slate-800 text-sm tracking-widest uppercase">Sınıf Yönetimi</h3>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-3">
+                                            {classes.length > 0 ? classes.map(c => (
+                                                <button 
+                                                    key={c.id} 
+                                                    onClick={() => setSelClass(c)} 
+                                                    className="p-5 bg-white admin-card rounded-2xl flex justify-between items-center group"
+                                                >
+                                                    <div className="text-left">
+                                                        <div className="font-black text-slate-700 group-hover:text-emerald-600 transition-colors">{c.name}</div>
+                                                        <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-tighter">
+                                                            {c.students?.length || 0} Aktif Öğrenci
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-2 bg-slate-50 rounded-xl text-slate-300 group-hover:bg-emerald-50 group-hover:text-emerald-500 transition-all rotate-180">
+                                                        <Icon name="chevron-left" className="w-4 h-4" />
+                                                    </div>
                                                 </button>
-                                            ))}
+                                            )) : <div className="text-center text-slate-300 py-10 italic">Sınıflar yükleniyor...</div>}
                                         </div>
                                     </div>
                                 </div>
                             ) : (
-                                <div className="bg-white p-6 rounded-[2.5rem] border-2 border-slate-100 shadow-xl fade-in">
-                                    <div className="flex justify-between items-center mb-6">
-                                        <button onClick={()=>setSelClass(null)} className="p-2 bg-slate-100 rounded-xl"><Icon name="chevron-left" className="w-5 h-5"/></button>
-                                        <h2 className="font-black text-xl italic text-slate-800">{selClass.name} Yönetimi</h2>
-                                        <div className="w-10"></div>
-                                    </div>
-                                    <div className="bg-emerald-50 p-6 rounded-3xl mb-8 border border-emerald-100">
-                                        <div className="space-y-3">
-                                            <input className="custom-input bg-white h-12" placeholder="Öğrenci Ad Soyad" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
-                                            <input className="custom-input bg-white h-12" placeholder="Öğrenci Şifresi" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
-                                            <button onClick={addStudentToClass} className="btn-main bg-emerald-600 text-white justify-center shadow-emerald-200 shadow-lg">ÖĞRENCİYİ KAYDET</button>
+                                <div className="bg-white p-8 rounded-[3rem] shadow-xl border-2 border-slate-50 fade-in">
+                                    <div className="flex justify-between items-center mb-8">
+                                        <button onClick={()=>setSelClass(null)} className="p-3 bg-slate-100 rounded-2xl text-slate-400 hover:bg-slate-800 hover:text-white transition-all">
+                                            <Icon name="chevron-left" className="w-6 h-6"/>
+                                        </button>
+                                        <div className="text-center">
+                                            <h2 className="font-black text-2xl italic text-slate-800">{selClass.name}</h2>
+                                            <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[0.2em] mt-1">Öğrenci Kayıt & Takip</p>
                                         </div>
+                                        <div className="w-12"></div>
                                     </div>
-                                    <div className="space-y-2">
+
+                                    <div className="bg-slate-50 p-8 rounded-[2.5rem] mb-10 border border-slate-100">
+                                        <div className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">Yeni Öğrenci Ekle</div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <input className="custom-input bg-white" placeholder="Öğrenci Ad Soyad" value={form.a} onChange={e=>setForm({...form, a:e.target.value})} />
+                                            <input className="custom-input bg-white" placeholder="Giriş Şifresi (Varsayılan: 1234)" value={form.b} onChange={e=>setForm({...form, b:e.target.value})} />
+                                        </div>
+                                        <button onClick={addStudentToClass} className="btn-main bg-emerald-600 text-white justify-center shadow-emerald-200 shadow-xl mt-4 w-full">
+                                            SINIFA KAYDET
+                                        </button>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest px-2 mb-4">Sınıf Listesi ({selClass.students?.length || 0})</h4>
                                         {selClass.students?.length > 0 ? selClass.students.map(s => (
-                                            <div key={s.id} className="p-4 bg-white border rounded-2xl flex justify-between items-center shadow-sm">
-                                                <div className="font-black text-sm">{s.name}</div>
-                                                <span className="text-[9px] font-black bg-slate-100 px-3 py-1.5 rounded-lg border tracking-widest">Şifre: {s.pass}</span>
+                                            <div key={s.id} className="p-5 bg-white border-2 border-slate-50 rounded-3xl flex justify-between items-center shadow-sm">
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-black text-slate-400 text-xs">
+                                                        {s.name.charAt(0)}
+                                                    </div>
+                                                    <div>
+                                                        <div className="font-black text-slate-700">{s.name}</div>
+                                                        <div className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest">Cüz: {s.cuz} / Sayfa: {s.sayfa}</div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-4">
+                                                    <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-4 py-2 rounded-xl border border-blue-100">Giriş Şifresi: {s.pass}</span>
+                                                </div>
                                             </div>
-                                        )) : <p className="text-center text-slate-400 py-10 italic">Henüz kayıt yok.</p>}
+                                        )) : (
+                                            <div className="text-center py-20 bg-slate-50 rounded-[2.5rem] border-2 border-dashed border-slate-200">
+                                                <p className="text-slate-400 font-bold italic">Bu sınıfta henüz kayıtlı öğrenci bulunmuyor.</p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
